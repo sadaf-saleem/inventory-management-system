@@ -1,0 +1,102 @@
+name: CI/CD Pipeline - Enterprise Inventory System
+
+on:
+  push:
+    branches: [ main, development, release-v1.0 ]
+  pull_request:
+    branches: [ main, development ]
+
+jobs:
+  lint-and-test-backend:
+    name: Backend Lint & Unit Tests
+    runs-on: ubuntu-latest
+
+    services:
+      mongodb:
+        image: mongo:6.0
+        ports:
+          - 27017:27017
+        env:
+          MONGO_INITDB_DATABASE: inventory_db_test
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install Backend Dependencies
+        run: |
+          cd server
+          npm ci || npm install
+
+      - name: Run Backend Linter (ESLint)
+        run: |
+          cd server
+          npm run lint --if-present
+
+      - name: Execute API Unit & Integration Tests
+        env:
+          MONGO_URI: mongodb://localhost:27017/inventory_db_test
+          JWT_SECRET: test_secret_key_123
+        run: |
+          cd server
+          npm test --if-present
+
+  lint-and-build-frontend:
+    name: Frontend Lint & Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install Frontend Dependencies
+        run: |
+          cd client
+          npm ci || npm install
+
+      - name: Build React Production Bundle
+        run: |
+          cd client
+          npm run build
+
+  docker-build-and-verify:
+    name: Build & Verify Docker Containers
+    needs: [lint-and-test-backend, lint-and-build-frontend]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build Server Docker Image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./server
+          file: ./server/Dockerfile
+          push: false
+          tags: ase-inventory-server:latest
+
+      - name: Build Client Docker Image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./client
+          file: ./client/Dockerfile
+          push: false
+          tags: ase-inventory-client:latest
